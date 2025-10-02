@@ -163,6 +163,16 @@ export class ContentProcessor {
             });
           }
           break;
+
+        case 'table':
+          const tableData = this.parseTableData($elem, $);
+          if (tableData.rows.length > 0) {
+            structure.push({
+              type: 'table',
+              ...tableData
+            });
+          }
+          break;
           
         default:
           const defaultText = $elem.text().trim();
@@ -439,5 +449,83 @@ export class ContentProcessor {
     }
     
     return downloadedImages;
+  }
+
+  /**
+   * Parse table data từ HTML table element
+   */
+  parseTableData($table, $) {
+    const tableData = {
+      headers: [],
+      rows: [],
+      caption: ''
+    };
+
+    // Lấy caption nếu có
+    const $caption = $table.find('caption');
+    if ($caption.length > 0) {
+      tableData.caption = $caption.text().trim();
+    }
+
+    // Xử lý header từ thead hoặc first row
+    const $thead = $table.find('thead');
+    if ($thead.length > 0) {
+      const $headerRow = $thead.find('tr').first();
+      $headerRow.find('th, td').each((i, cell) => {
+        tableData.headers.push($(cell).text().trim());
+      });
+    } else {
+      // Nếu không có thead, kiểm tra row đầu tiên có th không
+      const $firstRow = $table.find('tr').first();
+      const hasHeaderCells = $firstRow.find('th').length > 0;
+      
+      if (hasHeaderCells) {
+        $firstRow.find('th, td').each((i, cell) => {
+          tableData.headers.push($(cell).text().trim());
+        });
+      }
+    }
+
+    // Xử lý data rows từ tbody hoặc tất cả tr
+    const $tbody = $table.find('tbody');
+    let $dataRows;
+    
+    if ($tbody.length > 0) {
+      $dataRows = $tbody.find('tr');
+    } else {
+      $dataRows = $table.find('tr');
+      // Nếu có header, bỏ qua row đầu tiên
+      if (tableData.headers.length > 0) {
+        $dataRows = $dataRows.slice(1);
+      }
+    }
+
+    // Parse từng row
+    $dataRows.each((i, row) => {
+      const $row = $(row);
+      const rowData = [];
+      
+      // Chỉ xử lý td, không xử lý th trong data rows
+      $row.find('td').each((j, cell) => {
+        const $cell = $(cell);
+        const cellText = $cell.text().trim();
+        
+        // Kiểm tra colspan và rowspan
+        const colspan = parseInt($cell.attr('colspan')) || 1;
+        const rowspan = parseInt($cell.attr('rowspan')) || 1;
+        
+        rowData.push({
+          text: cellText,
+          colspan: colspan,
+          rowspan: rowspan
+        });
+      });
+      
+      if (rowData.length > 0) {
+        tableData.rows.push(rowData);
+      }
+    });
+
+    return tableData;
   }
 }

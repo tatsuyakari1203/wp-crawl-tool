@@ -1,4 +1,4 @@
-import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, UnderlineType, ImageRun } from 'docx';
+import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, UnderlineType, ImageRun, Table, TableRow, TableCell, WidthType } from 'docx';
 import { writeFileSync, readFileSync } from 'fs';
 import { join } from 'path';
 import chalk from 'chalk';
@@ -598,6 +598,89 @@ export class DocxExporter {
                 })
               ],
               spacing: { before: 200, after: 200 }
+            })
+          );
+        }
+        break;
+
+      case 'table':
+        // Thêm caption nếu có
+        if (item.caption) {
+          elements.push(
+            new Paragraph({
+              children: [
+                new TextRun({
+                  text: item.caption,
+                  size: 18,
+                  bold: true
+                })
+              ],
+              spacing: { before: 200, after: 100 },
+              alignment: AlignmentType.CENTER
+            })
+          );
+        }
+
+        // Tạo table
+        const tableRows = [];
+
+        // Thêm header row nếu có
+        if (item.headers && item.headers.length > 0) {
+          const headerCells = item.headers.map(header => 
+            new TableCell({
+              children: [
+                new Paragraph({
+                  children: [
+                    new TextRun({
+                      text: header,
+                      size: 18,
+                      bold: true
+                    })
+                  ]
+                })
+              ]
+            })
+          );
+          tableRows.push(new TableRow({ children: headerCells }));
+        }
+
+        // Thêm data rows
+        item.rows.forEach(row => {
+          const dataCells = row.map(cell => 
+            new TableCell({
+              children: [
+                new Paragraph({
+                  children: [
+                    new TextRun({
+                      text: cell.text || '',
+                      size: 16
+                    })
+                  ]
+                })
+              ],
+              columnSpan: cell.colspan > 1 ? cell.colspan : undefined,
+              rowSpan: cell.rowspan > 1 ? cell.rowspan : undefined
+            })
+          );
+          tableRows.push(new TableRow({ children: dataCells }));
+        });
+
+        if (tableRows.length > 0) {
+          elements.push(
+            new Table({
+              rows: tableRows,
+              width: {
+                size: 100,
+                type: WidthType.PERCENTAGE
+              }
+            })
+          );
+
+          // Thêm spacing sau table
+          elements.push(
+            new Paragraph({
+              children: [new TextRun({ text: '', size: 12 })],
+              spacing: { after: 200 }
             })
           );
         }

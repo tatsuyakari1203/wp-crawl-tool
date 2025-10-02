@@ -95,6 +95,22 @@ export class ContentProcessor {
   analyzeContentStructure($) {
     const structure = [];
     
+    // Đầu tiên, tìm tất cả hình ảnh có data-image-index trong toàn bộ document
+    $('img[data-image-index]').each((i, elem) => {
+      const $elem = $(elem);
+      const imageIndex = parseInt($elem.attr('data-image-index'));
+      if (!isNaN(imageIndex)) {
+        structure.push({
+          type: 'image',
+          index: imageIndex,
+          src: $elem.attr('src'),
+          alt: $elem.attr('alt') || '',
+          caption: $elem.closest('figure').find('figcaption').text() || ''
+        });
+      }
+    });
+    
+    // Sau đó xử lý các elements khác theo thứ tự trong document
     $('body').children().each((i, elem) => {
       const $elem = $(elem);
       const tagName = elem.tagName.toLowerCase();
@@ -149,19 +165,6 @@ export class ContentProcessor {
             type: 'code',
             text: $elem.text()
           });
-          break;
-
-        case 'img':
-          const imageIndex = parseInt($elem.attr('data-image-index'));
-          if (!isNaN(imageIndex)) {
-            structure.push({
-              type: 'image',
-              index: imageIndex,
-              src: $elem.attr('src'),
-              alt: $elem.attr('alt') || '',
-              caption: $elem.closest('figure').find('figcaption').text() || ''
-            });
-          }
           break;
 
         case 'table':

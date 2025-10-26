@@ -9,6 +9,7 @@ import { join } from 'path';
 import { WordPressCrawler } from './src/wordpress-crawler.js';
 import { ContentProcessor } from './src/content-processor.js';
 import { DocxExporter } from './src/docx-exporter.js';
+import { MarkdownExporter } from './src/markdown-exporter.js';
 
 const program = new Command();
 
@@ -21,8 +22,9 @@ program
   .command('export')
   .description('Crawl và xuất tất cả posts từ WordPress site')
   .requiredOption('-u, --url <url>', 'URL của WordPress site (ví dụ: https://example.com)')
-  .option('-o, --output <filename>', 'Tên file output (không cần .docx)', 'wordpress-export')
+  .option('-o, --output <filename>', 'Tên file output', 'wordpress-export')
   .option('-d, --dir <directory>', 'Thư mục output', './output')
+  .option('-f, --format <format>', 'Định dạng xuất (docx|markdown)', 'docx')
   .option('--no-toc', 'Không tạo mục lục')
   .option('--no-summary', 'Không tạo trang tóm tắt')
   .option('--group-by-category', 'Nhóm posts theo category')
@@ -38,8 +40,17 @@ program
         siteUrl = 'https://' + siteUrl;
       }
 
+      // Validate format
+      if (!['docx', 'markdown'].includes(options.format.toLowerCase())) {
+        console.error(chalk.red('❌ Format không hợp lệ. Chỉ hỗ trợ: docx, markdown'));
+        process.exit(1);
+      }
+
+      const fileExtension = options.format.toLowerCase() === 'markdown' ? '.md' : '.docx';
+      
       console.log(chalk.cyan(`📍 Site: ${siteUrl}`));
-      console.log(chalk.cyan(`📁 Output: ${join(options.dir, options.output + '.docx')}`));
+      console.log(chalk.cyan(`📁 Output: ${join(options.dir, options.output + fileExtension)}`));
+      console.log(chalk.cyan(`📋 Format: ${options.format.toUpperCase()}`));
       console.log('');
 
       // Tạo thư mục output nếu chưa có
@@ -79,20 +90,28 @@ program
       const processor = new ContentProcessor(options.dir);
       console.log(chalk.blue('🔄 Đang xử lý nội dung...'));
 
-      // Tạo DOCX
-      const exporter = new DocxExporter();
-      
       const exportOptions = {
         includeTableOfContents: options.toc,
         includeSummary: options.summary,
         sortByDate: !options.sortByTitle,
-        groupByCategory: options.groupByCategory
+        groupByCategory: options.groupByCategory,
+        downloadImages: true,
+        baseUrl: siteUrl
       };
 
-      await exporter.createDocument(posts, processor, exportOptions);
+      let outputPath;
       
-      // Lưu file
-      const outputPath = await exporter.saveToFile(options.output, options.dir);
+      if (options.format.toLowerCase() === 'markdown') {
+        // Tạo Markdown
+        const exporter = new MarkdownExporter();
+        await exporter.createMarkdown(posts, processor, exportOptions);
+        outputPath = await exporter.saveToFile(options.output, options.dir);
+      } else {
+        // Tạo DOCX
+        const exporter = new DocxExporter();
+        await exporter.createDocument(posts, processor, exportOptions);
+        outputPath = await exporter.saveToFile(options.output, options.dir);
+      }
       
       console.log('');
       console.log(chalk.green.bold('🎉 Hoàn thành!'));

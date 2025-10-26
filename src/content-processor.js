@@ -359,9 +359,9 @@ export class ContentProcessor {
   }
 
   /**
-   * Tải hình ảnh từ URL và lưu vào thư mục images
+   * Tải và tối ưu hình ảnh
    */
-  async downloadImage(imageUrl, baseUrl, index = 0) {
+  async downloadImage(imageUrl, baseUrl, index = 0, optimizeImage = true) {
     try {
       // Xử lý URL tương đối
       let fullUrl;
@@ -399,26 +399,39 @@ export class ContentProcessor {
       return new Promise((resolve, reject) => {
         writer.on('finish', async () => {
           try {
-            // Tối ưu hình ảnh với sharp
-            const optimizedPath = join(this.imagesDir, `optimized_${fileName}`);
-            await sharp(filePath)
-              .resize(800, 600, { 
-                fit: 'inside',
-                withoutEnlargement: true 
-              })
-              .jpeg({ quality: 80 })
-              .toFile(optimizedPath);
+            if (optimizeImage) {
+              // Tối ưu hình ảnh với sharp
+              const optimizedPath = join(this.imagesDir, `optimized_${fileName}`);
+              await sharp(filePath)
+                .resize(800, 600, { 
+                  fit: 'inside',
+                  withoutEnlargement: true 
+                })
+                .jpeg({ quality: 80 })
+                .toFile(optimizedPath);
 
-            resolve({
-              originalPath: filePath,
-              optimizedPath: optimizedPath,
-              fileName: `optimized_${fileName}`,
-              url: fullUrl
-            });
+              resolve({
+                originalPath: filePath,
+                optimizedPath: optimizedPath,
+                localPath: optimizedPath,
+                fileName: `optimized_${fileName}`,
+                url: fullUrl
+              });
+            } else {
+              // Giữ nguyên ảnh gốc
+              resolve({
+                originalPath: filePath,
+                optimizedPath: filePath,
+                localPath: filePath,
+                fileName: fileName,
+                url: fullUrl
+              });
+            }
           } catch (error) {
             resolve({
               originalPath: filePath,
               optimizedPath: filePath,
+              localPath: filePath,
               fileName: fileName,
               url: fullUrl
             });
@@ -436,12 +449,12 @@ export class ContentProcessor {
   /**
    * Tải tất cả hình ảnh từ một post
    */
-  async downloadPostImages(images, baseUrl) {
+  async downloadPostImages(images, baseUrl, optimizeImage = true) {
     const downloadedImages = [];
     
     for (let i = 0; i < images.length; i++) {
       const image = images[i];
-      const downloaded = await this.downloadImage(image.src, baseUrl, i);
+      const downloaded = await this.downloadImage(image.src, baseUrl, i, optimizeImage);
       
       if (downloaded) {
         downloadedImages.push({

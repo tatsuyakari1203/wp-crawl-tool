@@ -13,8 +13,11 @@ export class MarkdownExporter {
    * Tạo file markdown từ danh sách posts
    */
   async createMarkdown(posts, contentProcessor, options = {}) {
+    const { pages = [] } = options;
+    const totalItems = posts.length + pages.length;
+    
     console.log(UIHelper.createProgressBox('📝 Tạo Markdown Document', [
-      `Chuẩn bị xử lý ${posts.length} bài viết`,
+      `Chuẩn bị xử lý ${posts.length} bài viết và ${pages.length} pages`,
       'Đang khởi tạo markdown structure...'
     ]));
 
@@ -42,6 +45,7 @@ export class MarkdownExporter {
         UIHelper.createProcessStatus('📊', 'Tạo summary', 'Phân tích nội dung...', '')
       );
       const summary = contentProcessor.createContentSummary(posts);
+      summary.totalPages = pages.length;
       
       // Khởi tạo markdown content
       this.content = '';
@@ -63,9 +67,9 @@ export class MarkdownExporter {
       // Table of contents
       if (includeTableOfContents) {
         UIHelper.updateProgress(
-          UIHelper.createProcessStatus('📑', 'Tạo mục lục', 'Liệt kê bài viết...', '')
+          UIHelper.createProcessStatus('📑', 'Tạo mục lục', 'Liệt kê bài viết và pages...', '')
         );
-        this.addTableOfContents(sortedPosts);
+        this.addTableOfContents(sortedPosts, pages);
       }
 
       // Posts content
@@ -73,6 +77,11 @@ export class MarkdownExporter {
         await this.addPostsByCategory(sortedPosts, contentProcessor, downloadImages, options.baseUrl);
       } else {
         await this.addPostsSequentially(sortedPosts, contentProcessor, downloadImages, options.baseUrl);
+      }
+
+      // Pages content
+      if (pages.length > 0) {
+        await this.addPagesSequentially(pages, contentProcessor, downloadImages, options.baseUrl);
       }
 
       UIHelper.updateProgress(
@@ -112,6 +121,9 @@ export class MarkdownExporter {
     // Thống kê cơ bản
     this.content += `### Thống kê tổng quan\n\n`;
     this.content += `- **Tổng số bài viết:** ${summary.totalPosts}\n`;
+    if (summary.totalPages) {
+      this.content += `- **Tổng số pages:** ${summary.totalPages}\n`;
+    }
     this.content += `- **Tổng số từ:** ${summary.totalWords.toLocaleString()}\n`;
     this.content += `- **Trung bình từ/bài:** ${Math.round(summary.averageWords)}\n`;
     this.content += `- **Ngày đầu tiên:** ${summary.dateRange.earliest}\n`;
@@ -150,16 +162,32 @@ export class MarkdownExporter {
   /**
    * Thêm mục lục
    */
-  addTableOfContents(posts) {
+  addTableOfContents(posts, pages = []) {
     this.content += `## 📑 Mục lục\n\n`;
     
-    posts.forEach((post, index) => {
-      const title = this.cleanText(post.title.rendered);
-      const date = new Date(post.date).toLocaleDateString('vi-VN');
-      this.content += `${index + 1}. [${title}](#post-${post.id}) - *${date}*\n`;
-    });
+    // Posts section
+    if (posts.length > 0) {
+      this.content += `### 📝 Bài viết\n\n`;
+      posts.forEach((post, index) => {
+        const title = this.cleanText(post.title.rendered);
+        const date = new Date(post.date).toLocaleDateString('vi-VN');
+        this.content += `${index + 1}. [${title}](#post-${post.id}) - *${date}*\n`;
+      });
+      this.content += `\n`;
+    }
     
-    this.content += `\n---\n\n`;
+    // Pages section
+    if (pages.length > 0) {
+      this.content += `### 📄 Pages\n\n`;
+      pages.forEach((page, index) => {
+        const title = this.cleanText(page.title.rendered);
+        const date = new Date(page.date).toLocaleDateString('vi-VN');
+        this.content += `${index + 1}. [${title}](#page-${page.id}) - *${date}*\n`;
+      });
+      this.content += `\n`;
+    }
+    
+    this.content += `---\n\n`;
   }
 
   /**
@@ -181,6 +209,28 @@ export class MarkdownExporter {
       );
 
       await this.addPostContent(post, contentProcessor, i + 1, downloadImages, baseUrl);
+    }
+  }
+
+  /**
+   * Thêm pages tuần tự
+   */
+  async addPagesSequentially(pages, contentProcessor, downloadImages, baseUrl) {
+    this.content += `## 📄 Nội dung Pages\n\n`;
+    
+    for (let i = 0; i < pages.length; i++) {
+      const page = pages[i];
+      
+      UIHelper.updateProgress(
+        UIHelper.createProcessStatus(
+          '📄', 
+          `Xử lý page ${i + 1}/${pages.length}`, 
+          this.cleanText(page.title.rendered).substring(0, 50) + '...',
+          UIHelper.createProgressBar(i + 1, pages.length, 25)
+        )
+      );
+      
+      await this.addPageContent(page, contentProcessor, i + 1, downloadImages, baseUrl);
     }
   }
 
@@ -236,14 +286,14 @@ export class MarkdownExporter {
     this.content += `### ${index}. ${this.cleanText(meta.title)}\n\n`;
     
     // Meta info
-    this.content += `**Ngày:** ${meta.date} | **Tác giả:** ${meta.author}\n\n`;
+    this.content += `**Ngày:** ${meta.date} | **Tác giả:** ${meta.author ? meta.author.name : 'Unknown'}\n\n`;
     
     if (meta.categories.length > 0) {
-      this.content += `**Categories:** ${meta.categories.join(', ')}\n\n`;
+      this.content += `**Categories:** ${meta.categories.map(cat => cat.name).join(', ')}\n\n`;
     }
     
     if (meta.tags.length > 0) {
-      this.content += `**Tags:** ${meta.tags.join(', ')}\n\n`;
+      this.content += `**Tags:** ${meta.tags.map(tag => tag.name).join(', ')}\n\n`;
     }
 
     // Nội dung
@@ -252,7 +302,8 @@ export class MarkdownExporter {
       contentProcessor, 
       downloadImages,
       post.id,
-      baseUrl
+      baseUrl,
+      meta.title
     );
     
     this.content += processedContent;
@@ -260,9 +311,42 @@ export class MarkdownExporter {
   }
 
   /**
+   * Thêm nội dung page
+   */
+  async addPageContent(page, contentProcessor, index, downloadImages, baseUrl) {
+    // Anchor cho page
+    this.content += `<a id="page-${page.id}"></a>\n\n`;
+    
+    // Title
+    const title = this.cleanText(page.title.rendered);
+    this.content += `### ${index}. ${title}\n\n`;
+    
+    // Meta info
+    const date = new Date(page.date).toLocaleString('vi-VN');
+    const author = page._embedded?.author?.[0]?.name || page.author || 'Unknown';
+    
+    this.content += `**Ngày:** ${date} | **Tác giả:** ${author}\n\n`;
+    
+    // Content
+    if (page.content && page.content.rendered) {
+      const markdownContent = await this.processContentForMarkdown(
+        page.content.rendered, 
+        contentProcessor, 
+        downloadImages, 
+        page.id,
+        baseUrl,
+        title
+      );
+      this.content += markdownContent + '\n\n';
+    }
+    
+    this.content += `---\n\n`;
+  }
+
+  /**
    * Xử lý nội dung HTML thành markdown
    */
-  async processContentForMarkdown(htmlContent, contentProcessor, downloadImages, postId, baseUrl) {
+  async processContentForMarkdown(htmlContent, contentProcessor, downloadImages, postId, baseUrl, postTitle = '') {
     // Kiểm tra input
     if (!htmlContent) {
       return '';
@@ -280,7 +364,8 @@ export class MarkdownExporter {
       const downloadedImages = await contentProcessor.downloadPostImages(
           processed.images, 
           baseUrl,
-          false // Không nén ảnh cho markdown
+          false, // Không nén ảnh cho markdown
+          postTitle // Truyền post title để đặt tên file
         );
 
       // Thay thế image references
@@ -355,8 +440,16 @@ export class MarkdownExporter {
     // Remove remaining HTML tags
     markdown = markdown.replace(/<[^>]*>/g, '');
 
+    // Remove CSS code patterns
+    markdown = markdown.replace(/\/\*.*?\*\//gs, ''); // CSS comments
+    markdown = markdown.replace(/\.[a-zA-Z-_]+[^{]*\{[^}]*\}/g, ''); // CSS rules
+    markdown = markdown.replace(/elementor[^\n]*/g, ''); // Elementor specific
+    markdown = markdown.replace(/background-color[^\n]*/g, ''); // CSS properties
+    markdown = markdown.replace(/color:#[^\n]*/g, ''); // Color properties
+
     // Clean up extra whitespace
     markdown = markdown.replace(/\n{3,}/g, '\n\n');
+    markdown = markdown.replace(/\s{3,}/g, ' '); // Multiple spaces
     markdown = markdown.trim();
 
     return markdown;

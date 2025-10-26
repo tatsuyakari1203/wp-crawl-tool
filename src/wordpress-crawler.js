@@ -67,6 +67,65 @@ export class WordPressCrawler {
   }
 
   /**
+   * Lấy tất cả pages từ WordPress site
+   */
+  async getAllPages() {
+    const spinner = ora('Đang lấy danh sách pages...').start();
+    
+    try {
+      const pages = [];
+      let page = 1;
+      let hasMore = true;
+      
+      while (hasMore) {
+        try {
+          // Thử với _embed trước
+          let response = await fetch(`${this.apiUrl}/pages?page=${page}&per_page=50&_embed`);
+          
+          // Nếu lỗi với _embed, thử không có _embed
+          if (!response.ok && response.status === 400) {
+            console.log(chalk.yellow(`⚠️  Lỗi với _embed, thử không có _embed...`));
+            response = await fetch(`${this.apiUrl}/pages?page=${page}&per_page=50`);
+          }
+          
+          if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status} - ${response.statusText}`);
+          }
+          
+          const pagePages = await response.json();
+          
+          if (pagePages.length === 0) {
+            hasMore = false;
+          } else {
+            pages.push(...pagePages);
+            page++;
+            spinner.text = `Đã lấy ${pages.length} pages...`;
+          }
+          
+          // Thêm delay nhỏ để tránh rate limiting
+          await new Promise(resolve => setTimeout(resolve, 100));
+          
+        } catch (pageError) {
+          console.error(chalk.red(`Lỗi tại trang ${page}:`), pageError.message);
+          // Nếu lỗi ở trang đầu tiên, throw error
+          if (page === 1) {
+            throw pageError;
+          }
+          // Nếu lỗi ở trang sau, dừng lại và trả về những gì đã lấy được
+          hasMore = false;
+        }
+      }
+      
+      spinner.succeed(`Đã lấy thành công ${pages.length} pages`);
+      return pages;
+      
+    } catch (error) {
+      spinner.fail('Lỗi khi lấy pages từ WordPress');
+      throw new Error(`Không thể lấy pages: ${error.message}`);
+    }
+  }
+
+  /**
    * Lấy thông tin chi tiết của một post
    */
   async getPostDetails(postId) {

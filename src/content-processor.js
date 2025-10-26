@@ -43,23 +43,89 @@ export class ContentProcessor {
   processPostContent(post) {
     const $ = cheerio.load(post.content.rendered);
     
-    // Loại bỏ các thẻ script và style
-    $('script, style').remove();
+    // Loại bỏ các thẻ script, style, noscript và comments
+    $('script, style, noscript').remove();
+    $('*').contents().filter(function() {
+      return this.nodeType === 8; // Comment nodes
+    }).remove();
+    
+    // Loại bỏ CSS code trong text nodes
+    $('*').contents().filter(function() {
+      return this.nodeType === 3; // Text nodes
+    }).each(function() {
+      const text = $(this).text();
+      // Loại bỏ CSS code patterns
+      if (text.includes('elementor') || 
+          text.includes('background-color') || 
+          text.includes('color:#') ||
+          text.match(/\.[a-zA-Z-]+\s*\{[^}]*\}/g) ||
+          text.match(/\/\*.*?\*\//g)) {
+        $(this).remove();
+      }
+    });
+    
+    // Loại bỏ các thẻ và attributes không cần thiết
+    this.cleanHtmlAttributes($);
+    
+    // Loại bỏ các thẻ div rỗng hoặc chỉ chứa whitespace
+    $('div, span, section').each((i, elem) => {
+      const $elem = $(elem);
+      if ($elem.text().trim() === '' && $elem.find('img, video, audio, iframe').length === 0) {
+        $elem.remove();
+      }
+    });
     
     // Xử lý images - lưu thông tin để có thể tải về sau
     const images = [];
     $('img').each((i, elem) => {
       const $img = $(elem);
       const src = $img.attr('src');
-      const alt = $img.attr('alt') || '';
-      const caption = $img.closest('figure').find('figcaption').text() || '';
+      let alt = $img.attr('alt') || '';
+      let caption = $img.closest('figure').find('figcaption').text() || '';
+      
+      // Cải thiện alt text nếu trống
+      if (!alt) {
+        // Thử lấy từ title attribute
+        alt = $img.attr('title') || '';
+        
+        // Thử lấy từ caption
+        if (!alt && caption) {
+          alt = caption.substring(0, 100); // Giới hạn độ dài
+        }
+        
+        // Thử lấy từ context xung quanh
+        if (!alt) {
+          const $parent = $img.parent();
+          const contextText = $parent.text().trim();
+          if (contextText && contextText.length < 200) {
+            alt = contextText.substring(0, 100);
+          }
+        }
+        
+        // Fallback với tên file
+        if (!alt && src) {
+          const filename = basename(src).replace(/\.[^/.]+$/, ""); // Loại bỏ extension
+          alt = filename.replace(/[-_]/g, ' '); // Thay dấu gạch ngang/dưới bằng space
+        }
+      }
+      
+      // Cải thiện caption
+      if (!caption) {
+        // Thử tìm text gần ảnh
+        const $nextP = $img.closest('figure, div, p').next('p');
+        if ($nextP.length && $nextP.text().length < 300) {
+          caption = $nextP.text().trim();
+        }
+      }
       
       if (src) {
         images.push({
           src,
-          alt,
-          caption,
-          index: i
+          alt: alt.trim(),
+          caption: caption.trim(),
+          index: i,
+          originalAlt: $img.attr('alt') || '', // Giữ lại alt gốc
+          originalCaption: $img.closest('figure').find('figcaption').text() || ''
         });
         
         // Thêm data attribute để nhận diện sau này
@@ -87,6 +153,57 @@ export class ContentProcessor {
       images,
       structure: this.analyzeContentStructure($)
     };
+  }
+
+  /**
+   * Làm sạch HTML attributes không cần thiết
+   */
+  cleanHtmlAttributes($) {
+    // Danh sách attributes cần giữ lại
+    const keepAttributes = {
+      'img': ['src', 'alt', 'title', 'data-image-index'],
+      'a': ['href', 'title'],
+      'table': ['border', 'cellpadding', 'cellspacing'],
+      'td': ['colspan', 'rowspan'],
+      'th': ['colspan', 'rowspan'],
+      'blockquote': ['cite'],
+      'code': ['class'], // Để syntax highlighting
+      'pre': ['class']   // Để syntax highlighting
+    };
+
+    // Loại bỏ tất cả style attributes
+    $('*').removeAttr('style');
+    
+    // Loại bỏ các class không cần thiết (giữ lại một số class quan trọng)
+    $('*').each((i, elem) => {
+      const $elem = $(elem);
+      const tagName = elem.tagName.toLowerCase();
+      const classAttr = $elem.attr('class');
+      
+      if (classAttr) {
+        // Giữ lại class cho code highlighting
+        if (tagName !== 'code' && tagName !== 'pre') {
+          $elem.removeAttr('class');
+        }
+      }
+      
+      // Loại bỏ các attributes không cần thiết
+      const allowedAttrs = keepAttributes[tagName] || [];
+      const attrs = Object.keys(elem.attribs || {});
+      
+      attrs.forEach(attr => {
+        if (!allowedAttrs.includes(attr) && !attr.startsWith('data-image-')) {
+          $elem.removeAttr(attr);
+        }
+      });
+    });
+
+    // Loại bỏ các thẻ Elementor và WordPress specific
+    $('.elementor-element, .elementor-widget, .wp-block-*').each((i, elem) => {
+      const $elem = $(elem);
+      // Giữ nội dung nhưng loại bỏ wrapper
+      $elem.replaceWith($elem.html());
+    });
   }
 
   /**
@@ -323,9 +440,9 @@ export class ContentProcessor {
         earliest: null,
         latest: null
       },
-      categories: new Set(),
-      tags: new Set(),
-      authors: new Set(),
+      categories: new Map(),
+      tags: new Map(),
+      authors: new Map(),
       totalWords: 0
     };
 
@@ -340,45 +457,104 @@ export class ContentProcessor {
         summary.dateRange.latest = meta.date;
       }
 
-      // Categories, tags, authors
-      meta.categories.forEach(cat => summary.categories.add(cat.name));
-      meta.tags.forEach(tag => summary.tags.add(tag.name));
-      if (meta.author) summary.authors.add(meta.author.name);
+      // Categories với count
+      meta.categories.forEach(cat => {
+        const count = summary.categories.get(cat.name) || 0;
+        summary.categories.set(cat.name, count + 1);
+      });
+
+      // Tags với count
+      meta.tags.forEach(tag => {
+        const count = summary.tags.get(tag.name) || 0;
+        summary.tags.set(tag.name, count + 1);
+      });
+
+      // Authors với count
+      if (meta.author) {
+        const count = summary.authors.get(meta.author.name) || 0;
+        summary.authors.set(meta.author.name, count + 1);
+      }
 
       // Word count
       const content = this.processPostContent(post);
       summary.totalWords += content.plainText.split(/\s+/).length;
     });
 
+    // Chuyển Map thành Array với count và sắp xếp
+    const categoriesArray = Array.from(summary.categories.entries())
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count);
+
+    const tagsArray = Array.from(summary.tags.entries())
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count);
+
+    const authorsArray = Array.from(summary.authors.entries())
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count);
+
     return {
       ...summary,
-      categories: Array.from(summary.categories),
-      tags: Array.from(summary.tags),
-      authors: Array.from(summary.authors)
+      categories: categoriesArray,
+      tags: tagsArray,
+      authors: authorsArray,
+      averageWords: summary.totalWords / posts.length || 0
     };
   }
 
   /**
    * Tải và tối ưu hình ảnh
    */
-  async downloadImage(imageUrl, baseUrl, index = 0, optimizeImage = true) {
+  async downloadImage(imageUrl, baseUrl, index = 0, optimizeImage = true, postTitle = '') {
     try {
-      // Xử lý URL tương đối
-      let fullUrl;
-      if (imageUrl.startsWith('http')) {
-        fullUrl = imageUrl;
-      } else if (imageUrl.startsWith('//')) {
-        fullUrl = 'https:' + imageUrl;
-      } else {
-        const base = new URL(baseUrl);
-        fullUrl = new URL(imageUrl, base.origin).href;
+      // Validate input
+      if (!imageUrl || typeof imageUrl !== 'string') {
+        console.warn(`Invalid image URL: ${imageUrl}`);
+        return null;
       }
 
-      // Tạo tên file duy nhất
+      // Skip data URLs and invalid URLs
+      if (imageUrl.startsWith('data:') || imageUrl.includes('base64')) {
+        console.warn(`Skipping data URL: ${imageUrl.substring(0, 50)}...`);
+        return null;
+      }
+
+      // Xử lý URL tương đối
+      let fullUrl;
+      try {
+        if (imageUrl.startsWith('http')) {
+          fullUrl = imageUrl;
+        } else if (imageUrl.startsWith('//')) {
+          fullUrl = 'https:' + imageUrl;
+        } else {
+          const base = new URL(baseUrl);
+          fullUrl = new URL(imageUrl, base.origin).href;
+        }
+        
+        // Validate final URL
+        new URL(fullUrl); // This will throw if invalid
+      } catch (urlError) {
+        console.warn(`Invalid URL construction: ${imageUrl} with base ${baseUrl}`);
+        return null;
+      }
+
+      // Tạo tên file dựa trên post title
       const urlObj = new URL(fullUrl);
       const originalName = basename(urlObj.pathname);
       const ext = extname(originalName) || '.jpg';
-      const fileName = `image_${index}_${Date.now()}${ext}`;
+      
+      // Tạo slug từ post title
+      let filePrefix = 'image';
+      if (postTitle) {
+        filePrefix = postTitle
+          .toLowerCase()
+          .replace(/[^\w\s-]/g, '') // Loại bỏ ký tự đặc biệt
+          .replace(/\s+/g, '-') // Thay space bằng dấu gạch ngang
+          .replace(/-+/g, '-') // Loại bỏ dấu gạch ngang liên tiếp
+          .substring(0, 50); // Giới hạn độ dài
+      }
+      
+      const fileName = `${filePrefix}_${index + 1}_${Date.now()}${ext}`;
       const filePath = join(this.imagesDir, fileName);
 
       // Tải hình ảnh
@@ -386,11 +562,21 @@ export class ContentProcessor {
         method: 'GET',
         url: fullUrl,
         responseType: 'stream',
-        timeout: 10000,
+        timeout: 15000, // Tăng timeout
+        maxRedirects: 5,
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+          'Accept': 'image/webp,image/apng,image/*,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Cache-Control': 'no-cache'
         }
       });
+
+      // Check response status
+      if (response.status !== 200) {
+        console.warn(`Failed to download image: ${fullUrl} - Status: ${response.status}`);
+        return null;
+      }
 
       // Lưu file
       const writer = createWriteStream(filePath);
@@ -449,18 +635,52 @@ export class ContentProcessor {
   /**
    * Tải tất cả hình ảnh từ một post
    */
-  async downloadPostImages(images, baseUrl, optimizeImage = true) {
+  async downloadPostImages(images, baseUrl, optimizeImage = true, postTitle = '') {
     const downloadedImages = [];
+    const maxConcurrent = 3; // Giới hạn số ảnh download đồng thời
     
-    for (let i = 0; i < images.length; i++) {
-      const image = images[i];
-      const downloaded = await this.downloadImage(image.src, baseUrl, i, optimizeImage);
+    // Chia images thành chunks để xử lý song song
+    for (let i = 0; i < images.length; i += maxConcurrent) {
+      const chunk = images.slice(i, i + maxConcurrent);
       
-      if (downloaded) {
-        downloadedImages.push({
-          ...image,
-          ...downloaded
-        });
+      const promises = chunk.map(async (image, chunkIndex) => {
+        const globalIndex = i + chunkIndex;
+        
+        // Retry mechanism
+        for (let retry = 0; retry < 3; retry++) {
+          try {
+            const downloaded = await this.downloadImage(image.src, baseUrl, globalIndex, optimizeImage, postTitle);
+            
+            if (downloaded) {
+              return {
+                ...image,
+                ...downloaded
+              };
+            }
+          } catch (error) {
+            console.warn(`Retry ${retry + 1}/3 for image ${image.src}: ${error.message}`);
+            if (retry === 2) {
+              console.error(`Failed to download image after 3 retries: ${image.src}`);
+            }
+            // Wait before retry
+            await new Promise(resolve => setTimeout(resolve, 1000 * (retry + 1)));
+          }
+        }
+        
+        return null;
+      });
+      
+      const results = await Promise.allSettled(promises);
+      
+      results.forEach(result => {
+        if (result.status === 'fulfilled' && result.value) {
+          downloadedImages.push(result.value);
+        }
+      });
+      
+      // Delay between chunks to avoid overwhelming the server
+      if (i + maxConcurrent < images.length) {
+        await new Promise(resolve => setTimeout(resolve, 500));
       }
     }
     

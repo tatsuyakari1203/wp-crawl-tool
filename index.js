@@ -29,6 +29,7 @@ program
   .option('--no-summary', 'Không tạo trang tóm tắt')
   .option('--group-by-category', 'Nhóm posts theo category')
   .option('--sort-by-title', 'Sắp xếp theo tiêu đề thay vì ngày')
+  .option('--include-pages', 'Bao gồm cả pages trong export')
   .action(async (options) => {
     try {
       console.log(chalk.blue.bold('🚀 WordPress Crawl Tool'));
@@ -86,6 +87,13 @@ program
 
       console.log(chalk.green(`✅ Đã crawl ${posts.length} posts`));
 
+      // Crawl pages nếu được yêu cầu
+      let pages = [];
+      if (options.includePages) {
+        pages = await crawler.getAllPages();
+        console.log(chalk.green(`✅ Đã crawl ${pages.length} pages`));
+      }
+
       // Xử lý content
       const processor = new ContentProcessor(options.dir);
       console.log(chalk.blue('🔄 Đang xử lý nội dung...'));
@@ -96,7 +104,8 @@ program
         sortByDate: !options.sortByTitle,
         groupByCategory: options.groupByCategory,
         downloadImages: true,
-        baseUrl: siteUrl
+        baseUrl: siteUrl,
+        pages: pages
       };
 
       let outputPath;
@@ -122,6 +131,9 @@ program
       console.log('');
       console.log(chalk.blue.bold('📊 Thống kê:'));
       console.log(chalk.gray(`   • Tổng posts: ${summary.totalPosts}`));
+      if (pages.length > 0) {
+        console.log(chalk.gray(`   • Tổng pages: ${pages.length}`));
+      }
       console.log(chalk.gray(`   • Tổng từ: ${summary.totalWords.toLocaleString('vi-VN')}`));
       console.log(chalk.gray(`   • Categories: ${summary.categories.length}`));
       console.log(chalk.gray(`   • Tags: ${summary.tags.length}`));

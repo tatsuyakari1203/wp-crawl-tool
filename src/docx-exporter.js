@@ -299,7 +299,7 @@ export class DocxExporter {
       let downloadedImages = [];
       if (content.images && content.images.length > 0) {
         console.log(chalk.cyan(`   🖼️  [${progress}] Tải ${content.images.length} hình ảnh...`));
-        downloadedImages = await contentProcessor.downloadPostImages(content.images, baseUrl);
+        downloadedImages = await contentProcessor.downloadPostImages(content.images, baseUrl, true, meta.title);
         console.log(chalk.green(`   ✅ [${progress}] Đã tải xong ${downloadedImages.length} hình ảnh`));
       }
       
@@ -372,7 +372,7 @@ export class DocxExporter {
         let downloadedImages = [];
         if (content.images && content.images.length > 0) {
           console.log(chalk.cyan(`   🖼️  [${progress}] Tải ${content.images.length} hình ảnh...`));
-          downloadedImages = await contentProcessor.downloadPostImages(content.images, baseUrl);
+          downloadedImages = await contentProcessor.downloadPostImages(content.images, baseUrl, true, meta.title);
           console.log(chalk.green(`   ✅ [${progress}] Đã tải xong ${downloadedImages.length} hình ảnh`));
         }
         
